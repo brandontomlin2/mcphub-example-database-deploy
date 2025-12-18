@@ -1,0 +1,18 @@
+{
+  "name": "database-query-mcp",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server-http.js",
+  "scripts": {
+    "start": "node server-http.js"
+  },
+  "keywords": ["mcp", "database", "postgres"],
+  "author": "",
+  "license": "ISC",
+  "description": "Example MCP server that queries a PostgreSQL database",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.24.3",
+    "express": "^5.2.1",
+    "pg": "^8.11.0"
+  }
+}
