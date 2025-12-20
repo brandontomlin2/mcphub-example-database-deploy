@@ -11,13 +11,21 @@ const { Pool } = pg;
 
 // Create database connection pool
 let pool = null;
+let poolError = null;
 if (process.env.DATABASE_URL) {
-  pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-  });
-  console.log("Database connection pool created");
+  try {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+    });
+    console.log("Database connection pool created");
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("Failed to create database pool:", msg);
+    poolError = `Failed to initialize database: ${msg}`;
+  }
 } else {
   console.warn("WARNING: DATABASE_URL not set. Database features will not work.");
+  poolError = "DATABASE_URL environment variable is not set";
 }
 
 // Create the MCP server instance
@@ -97,12 +105,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (!pool) {
-    throw new Error("Database not configured. DATABASE_URL environment variable is required.");
+    const errorMsg = poolError || "Database not configured. DATABASE_URL environment variable is required.";
+    throw new Error(errorMsg);
   }
 
   const toolName = request.params.name;
 
   try {
+    // Test database connection before executing queries
+    try {
+      await pool.query('SELECT 1');
+    } catch (connError) {
+      const msg = connError instanceof Error ? connError.message : String(connError);
+      throw new Error(`Database connection failed: ${msg}. Please check your DATABASE_URL configuration.`);
+    }
     if (toolName === "search_data") {
       const { column, query, limit = 10 } = request.params.arguments;
       
