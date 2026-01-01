@@ -142,47 +142,52 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 // Handle tool execution - USE CACHED DATA for instant response (workaround for SDK async bug)
-server.setRequestHandler(CallToolRequestSchema, (request) => {
-  const toolName = request.params.name;
-  console.log(`[TOOL CALL] Received: ${toolName}`, JSON.stringify(request.params.arguments));
-  
-  // Use cached data for instant response (no async!)
-  if (!cachedData) {
-    console.log(`[TOOL CALL] Error: Data not loaded yet`);
-    return { content: [{ type: "text", text: "Error: Data not loaded yet. Please try again in a moment." }] };
-  }
-
-  let result;
-  
-  if (toolName === "search_data") {
-    const { column, query, limit = 10 } = request.params.arguments || {};
-    if (!column || !query) {
-      result = { content: [{ type: "text", text: "Error: column and query are required" }] };
-    } else {
-      const matches = cachedData.filter(row => 
-        row[column] && String(row[column]).toLowerCase().includes(query.toLowerCase())
-      ).slice(0, limit);
-      console.log(`[TOOL CALL] search_data found ${matches.length} matches`);
-      result = { content: [{ type: "text", text: JSON.stringify(matches, null, 2) }] };
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  try {
+    const toolName = request.params.name;
+    console.log(`[TOOL CALL] Received: ${toolName}`, JSON.stringify(request.params.arguments));
+    
+    // Use cached data for instant response (no async!)
+    if (!cachedData) {
+      console.log(`[TOOL CALL] Error: Data not loaded yet`);
+      return { content: [{ type: "text", text: "Error: Data not loaded yet. Please try again in a moment." }] };
     }
-  } else if (toolName === "get_all_data") {
-    const { limit = 100 } = request.params.arguments || {};
-    const data = cachedData.slice(0, limit);
-    console.log(`[TOOL CALL] get_all_data returning ${data.length} rows`);
-    result = { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-  } else if (toolName === "get_row_count") {
-    console.log(`[TOOL CALL] get_row_count returning ${cachedData.length}`);
-    result = { content: [{ type: "text", text: `Total rows: ${cachedData.length}` }] };
-  } else if (toolName === "get_columns") {
-    console.log(`[TOOL CALL] get_columns returning ${cachedColumns?.length || 0} columns`);
-    result = { content: [{ type: "text", text: JSON.stringify(cachedColumns || [], null, 2) }] };
-  } else {
-    console.log(`[TOOL CALL] Unknown tool: ${toolName}`);
-    result = { content: [{ type: "text", text: `Unknown tool: ${toolName}` }] };
+
+    let result;
+    
+    if (toolName === "search_data") {
+      const { column, query, limit = 10 } = request.params.arguments || {};
+      if (!column || !query) {
+        result = { content: [{ type: "text", text: "Error: column and query are required" }] };
+      } else {
+        const matches = cachedData.filter(row => 
+          row[column] && String(row[column]).toLowerCase().includes(query.toLowerCase())
+        ).slice(0, limit);
+        console.log(`[TOOL CALL] search_data found ${matches.length} matches`);
+        result = { content: [{ type: "text", text: JSON.stringify(matches, null, 2) }] };
+      }
+    } else if (toolName === "get_all_data") {
+      const { limit = 100 } = request.params.arguments || {};
+      const data = cachedData.slice(0, limit);
+      console.log(`[TOOL CALL] get_all_data returning ${data.length} rows`);
+      result = { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+    } else if (toolName === "get_row_count") {
+      console.log(`[TOOL CALL] get_row_count returning ${cachedData.length}`);
+      result = { content: [{ type: "text", text: `Total rows: ${cachedData.length}` }] };
+    } else if (toolName === "get_columns") {
+      console.log(`[TOOL CALL] get_columns returning ${cachedColumns?.length || 0} columns`);
+      result = { content: [{ type: "text", text: JSON.stringify(cachedColumns || [], null, 2) }] };
+    } else {
+      console.log(`[TOOL CALL] Unknown tool: ${toolName}`);
+      result = { content: [{ type: "text", text: `Unknown tool: ${toolName}` }] };
+    }
+    
+    console.log(`[TOOL CALL] Returning result for ${toolName}:`, JSON.stringify(result));
+    return result;
+  } catch (error) {
+    console.error(`[TOOL CALL] EXCEPTION:`, error);
+    throw error;
   }
-  
-  console.log(`[TOOL CALL] Returning result for ${toolName}`);
-  return result;
 });
 
 // Create an Express HTTP server
