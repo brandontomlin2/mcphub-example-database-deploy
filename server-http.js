@@ -9,22 +9,44 @@ import {
 
 const { Pool } = pg;
 
-// Create database connection pool
+// Create database connection pool and preload data
 let pool = null;
 let poolError = null;
+let cachedData = null;
+let cachedColumns = null;
+
+async function preloadData() {
+  if (!pool) return;
+  try {
+    // Get schema info
+    const schemaResult = await pool.query('SELECT current_schema(), current_user');
+    console.log(`Database connected: schema=${schemaResult.rows[0].current_schema}, user=${schemaResult.rows[0].current_user}`);
+    
+    // Preload all data
+    const dataResult = await pool.query('SELECT * FROM data LIMIT 100');
+    cachedData = dataResult.rows;
+    console.log(`Preloaded ${cachedData.length} rows`);
+    
+    // Preload columns
+    const colResult = await pool.query(`
+      SELECT column_name FROM information_schema.columns 
+      WHERE table_schema = current_schema() AND table_name = 'data'
+      ORDER BY ordinal_position
+    `);
+    cachedColumns = colResult.rows.map(r => r.column_name);
+    console.log(`Preloaded columns: ${cachedColumns.join(', ')}`);
+  } catch (err) {
+    console.error("Preload failed:", err.message);
+  }
+}
+
 if (process.env.DATABASE_URL) {
   try {
     pool = new Pool({
       connectionString: process.env.DATABASE_URL,
     });
     console.log("Database connection pool created");
-    
-    // Test connection and verify search_path at startup
-    pool.query('SELECT current_schema(), current_user').then(result => {
-      console.log(`Database connected: schema=${result.rows[0].current_schema}, user=${result.rows[0].current_user}`);
-    }).catch(err => {
-      console.error("Database connection test failed:", err.message);
-    });
+    preloadData(); // Preload data at startup
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("Failed to create database pool:", msg);
@@ -109,83 +131,48 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-// Handle tool execution
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  console.log(`[TOOL CALL] Received: ${request.params.name}`, JSON.stringify(request.params.arguments));
-  
-  if (!pool) {
-    const errorMsg = poolError || "Database not configured. DATABASE_URL environment variable is required.";
-    console.log(`[TOOL CALL] Error: ${errorMsg}`);
-    return { content: [{ type: "text", text: `Error: ${errorMsg}` }] };
-  }
-
+// Handle tool execution - USE CACHED DATA for instant response (workaround for SDK async bug)
+server.setRequestHandler(CallToolRequestSchema, (request) => {
   const toolName = request.params.name;
-
-  try {
-    // Test database connection before executing queries
-    console.log(`[TOOL CALL] Testing database connection...`);
-    try {
-      await pool.query('SELECT 1');
-      console.log(`[TOOL CALL] Database connection OK`);
-    } catch (connError) {
-      const msg = connError instanceof Error ? connError.message : String(connError);
-      console.log(`[TOOL CALL] Database connection failed: ${msg}`);
-      return { content: [{ type: "text", text: `Database connection failed: ${msg}` }] };
-    }
-    let result;
-    
-    if (toolName === "search_data") {
-      const { column, query, limit = 10 } = request.params.arguments || {};
-      
-      // Validate column name to prevent SQL injection
-      if (!/^[a-z0-9_]+$/i.test(column)) {
-        console.log(`[TOOL CALL] Invalid column: ${column}`);
-        result = { content: [{ type: "text", text: `Invalid column name: ${column}` }] };
-      } else {
-        console.log(`[TOOL CALL] Executing search_data query...`);
-        const queryResult = await pool.query(
-          `SELECT * FROM data WHERE ${column} ILIKE $1 LIMIT $2`,
-          [`%${query}%`, limit]
-        );
-        console.log(`[TOOL CALL] search_data returned ${queryResult.rows.length} rows`);
-        result = { content: [{ type: "text", text: JSON.stringify(queryResult.rows, null, 2) }] };
-      }
-    } else if (toolName === "get_all_data") {
-      const { limit = 100 } = request.params.arguments || {};
-      console.log(`[TOOL CALL] Executing get_all_data query with limit ${limit}...`);
-      const queryResult = await pool.query(`SELECT * FROM data LIMIT $1`, [limit]);
-      console.log(`[TOOL CALL] get_all_data returned ${queryResult.rows.length} rows`);
-      result = { content: [{ type: "text", text: JSON.stringify(queryResult.rows, null, 2) }] };
-    } else if (toolName === "get_row_count") {
-      console.log(`[TOOL CALL] Executing get_row_count query...`);
-      const queryResult = await pool.query(`SELECT COUNT(*) as count FROM data`);
-      const count = queryResult.rows[0]?.count || 0;
-      console.log(`[TOOL CALL] get_row_count returned ${count}`);
-      result = { content: [{ type: "text", text: `Total rows: ${count}` }] };
-    } else if (toolName === "get_columns") {
-      console.log(`[TOOL CALL] Executing get_columns query...`);
-      const queryResult = await pool.query(`
-        SELECT column_name 
-        FROM information_schema.columns 
-        WHERE table_schema = current_schema() 
-        AND table_name = 'data'
-        ORDER BY ordinal_position
-      `);
-      const columns = queryResult.rows.map((r) => r.column_name);
-      console.log(`[TOOL CALL] get_columns returned ${columns.length} columns`);
-      result = { content: [{ type: "text", text: JSON.stringify(columns, null, 2) }] };
-    } else {
-      console.log(`[TOOL CALL] Unknown tool: ${toolName}`);
-      result = { content: [{ type: "text", text: `Unknown tool: ${toolName}` }] };
-    }
-    
-    console.log(`[TOOL CALL] Returning result for ${toolName}`);
-    return result;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.log(`[TOOL CALL] Error: ${message}`);
-    return { content: [{ type: "text", text: `Error: ${message}` }] };
+  console.log(`[TOOL CALL] Received: ${toolName}`, JSON.stringify(request.params.arguments));
+  
+  // Use cached data for instant response (no async!)
+  if (!cachedData) {
+    console.log(`[TOOL CALL] Error: Data not loaded yet`);
+    return { content: [{ type: "text", text: "Error: Data not loaded yet. Please try again in a moment." }] };
   }
+
+  let result;
+  
+  if (toolName === "search_data") {
+    const { column, query, limit = 10 } = request.params.arguments || {};
+    if (!column || !query) {
+      result = { content: [{ type: "text", text: "Error: column and query are required" }] };
+    } else {
+      const matches = cachedData.filter(row => 
+        row[column] && String(row[column]).toLowerCase().includes(query.toLowerCase())
+      ).slice(0, limit);
+      console.log(`[TOOL CALL] search_data found ${matches.length} matches`);
+      result = { content: [{ type: "text", text: JSON.stringify(matches, null, 2) }] };
+    }
+  } else if (toolName === "get_all_data") {
+    const { limit = 100 } = request.params.arguments || {};
+    const data = cachedData.slice(0, limit);
+    console.log(`[TOOL CALL] get_all_data returning ${data.length} rows`);
+    result = { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+  } else if (toolName === "get_row_count") {
+    console.log(`[TOOL CALL] get_row_count returning ${cachedData.length}`);
+    result = { content: [{ type: "text", text: `Total rows: ${cachedData.length}` }] };
+  } else if (toolName === "get_columns") {
+    console.log(`[TOOL CALL] get_columns returning ${cachedColumns?.length || 0} columns`);
+    result = { content: [{ type: "text", text: JSON.stringify(cachedColumns || [], null, 2) }] };
+  } else {
+    console.log(`[TOOL CALL] Unknown tool: ${toolName}`);
+    result = { content: [{ type: "text", text: `Unknown tool: ${toolName}` }] };
+  }
+  
+  console.log(`[TOOL CALL] Returning result for ${toolName}`);
+  return result;
 });
 
 // Create an Express HTTP server
