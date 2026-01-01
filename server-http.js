@@ -70,6 +70,16 @@ const server = new Server(
   }
 );
 
+// Add error handler to catch any silent failures
+server.onerror = (error) => {
+  console.error("[SERVER ERROR]", error);
+};
+
+// Add close handler
+server.onclose = () => {
+  console.log("[SERVER] Connection closed");
+};
+
 // Define tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
@@ -224,8 +234,18 @@ app.get("/sse", async (req, res) => {
   // Wrap the transport's send method to log SSE events
   const originalSend = transport.send.bind(transport);
   transport.send = async (message) => {
-    console.log(`[SSE] Sending event for session ${sessionId}:`, JSON.stringify(message).substring(0, 200));
-    return originalSend(message);
+    console.log(`[SSE] >>> SEND called for session ${sessionId}`);
+    console.log(`[SSE] >>> Message type: ${message.method || (message.result ? 'result' : message.error ? 'error' : 'unknown')}`);
+    console.log(`[SSE] >>> Message ID: ${message.id}`);
+    console.log(`[SSE] >>> Payload:`, JSON.stringify(message).substring(0, 300));
+    try {
+      const result = await originalSend(message);
+      console.log(`[SSE] >>> SEND completed successfully`);
+      return result;
+    } catch (err) {
+      console.error(`[SSE] >>> SEND FAILED:`, err);
+      throw err;
+    }
   };
 
   activeTransports.set(sessionId, transport);
