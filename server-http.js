@@ -18,6 +18,13 @@ if (process.env.DATABASE_URL) {
       connectionString: process.env.DATABASE_URL,
     });
     console.log("Database connection pool created");
+    
+    // Test connection and verify search_path at startup
+    pool.query('SELECT current_schema(), current_user').then(result => {
+      console.log(`Database connected: schema=${result.rows[0].current_schema}, user=${result.rows[0].current_user}`);
+    }).catch(err => {
+      console.error("Database connection test failed:", err.message);
+    });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("Failed to create database pool:", msg);
