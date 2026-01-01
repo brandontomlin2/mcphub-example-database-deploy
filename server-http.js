@@ -104,8 +104,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  console.log(`[TOOL CALL] Received: ${request.params.name}`, JSON.stringify(request.params.arguments));
+  
   if (!pool) {
     const errorMsg = poolError || "Database not configured. DATABASE_URL environment variable is required.";
+    console.log(`[TOOL CALL] Error: ${errorMsg}`);
     throw new Error(errorMsg);
   }
 
@@ -264,22 +267,28 @@ app.get("/sse", async (req, res) => {
 // Message endpoint
 app.post("/message", async (req, res) => {
   const sessionId = req.query.sessionId;
-  console.log(`Received message for session: ${sessionId}`);
+  console.log(`[MESSAGE] Received for session: ${sessionId}`);
+  console.log(`[MESSAGE] Body:`, JSON.stringify(req.body));
 
   if (!sessionId) {
+    console.log(`[MESSAGE] Error: No sessionId`);
     return res.status(400).json({ error: "sessionId query parameter required" });
   }
 
   const transport = activeTransports.get(sessionId);
 
   if (!transport) {
+    console.log(`[MESSAGE] Error: No transport for session ${sessionId}`);
+    console.log(`[MESSAGE] Active sessions:`, Array.from(activeTransports.keys()));
     return res.status(400).json({ error: "No active session found" });
   }
 
   try {
+    console.log(`[MESSAGE] Calling handlePostMessage...`);
     await transport.handlePostMessage(req, res, req.body);
+    console.log(`[MESSAGE] handlePostMessage completed`);
   } catch (error) {
-    console.error("Error handling message:", error);
+    console.error("[MESSAGE] Error handling message:", error);
     if (!res.headersSent) {
       res.status(500).json({ error: "Internal server error" });
     }
