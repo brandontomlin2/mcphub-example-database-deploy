@@ -109,99 +109,75 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (!pool) {
     const errorMsg = poolError || "Database not configured. DATABASE_URL environment variable is required.";
     console.log(`[TOOL CALL] Error: ${errorMsg}`);
-    throw new Error(errorMsg);
+    return { content: [{ type: "text", text: `Error: ${errorMsg}` }] };
   }
 
   const toolName = request.params.name;
 
   try {
     // Test database connection before executing queries
+    console.log(`[TOOL CALL] Testing database connection...`);
     try {
       await pool.query('SELECT 1');
+      console.log(`[TOOL CALL] Database connection OK`);
     } catch (connError) {
       const msg = connError instanceof Error ? connError.message : String(connError);
-      throw new Error(`Database connection failed: ${msg}. Please check your DATABASE_URL configuration.`);
+      console.log(`[TOOL CALL] Database connection failed: ${msg}`);
+      return { content: [{ type: "text", text: `Database connection failed: ${msg}` }] };
     }
+    let result;
+    
     if (toolName === "search_data") {
-      const { column, query, limit = 10 } = request.params.arguments;
+      const { column, query, limit = 10 } = request.params.arguments || {};
       
       // Validate column name to prevent SQL injection
       if (!/^[a-z0-9_]+$/i.test(column)) {
-        throw new Error(`Invalid column name: ${column}`);
+        console.log(`[TOOL CALL] Invalid column: ${column}`);
+        result = { content: [{ type: "text", text: `Invalid column name: ${column}` }] };
+      } else {
+        console.log(`[TOOL CALL] Executing search_data query...`);
+        const queryResult = await pool.query(
+          `SELECT * FROM data WHERE ${column} ILIKE $1 LIMIT $2`,
+          [`%${query}%`, limit]
+        );
+        console.log(`[TOOL CALL] search_data returned ${queryResult.rows.length} rows`);
+        result = { content: [{ type: "text", text: JSON.stringify(queryResult.rows, null, 2) }] };
       }
-
-      const result = await pool.query(
-        `SELECT * FROM data WHERE ${column} ILIKE $1 LIMIT $2`,
-        [`%${query}%`, limit]
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result.rows, null, 2),
-          },
-        ],
-      };
-    }
-
-    if (toolName === "get_all_data") {
-      const { limit = 100 } = request.params.arguments;
-      
-      const result = await pool.query(
-        `SELECT * FROM data LIMIT $1`,
-        [limit]
-      );
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(result.rows, null, 2),
-          },
-        ],
-      };
-    }
-
-    if (toolName === "get_row_count") {
-      const result = await pool.query(`SELECT COUNT(*) as count FROM data`);
-      const count = result.rows[0]?.count || 0;
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Total rows: ${count}`,
-          },
-        ],
-      };
-    }
-
-    if (toolName === "get_columns") {
-      const result = await pool.query(`
+    } else if (toolName === "get_all_data") {
+      const { limit = 100 } = request.params.arguments || {};
+      console.log(`[TOOL CALL] Executing get_all_data query with limit ${limit}...`);
+      const queryResult = await pool.query(`SELECT * FROM data LIMIT $1`, [limit]);
+      console.log(`[TOOL CALL] get_all_data returned ${queryResult.rows.length} rows`);
+      result = { content: [{ type: "text", text: JSON.stringify(queryResult.rows, null, 2) }] };
+    } else if (toolName === "get_row_count") {
+      console.log(`[TOOL CALL] Executing get_row_count query...`);
+      const queryResult = await pool.query(`SELECT COUNT(*) as count FROM data`);
+      const count = queryResult.rows[0]?.count || 0;
+      console.log(`[TOOL CALL] get_row_count returned ${count}`);
+      result = { content: [{ type: "text", text: `Total rows: ${count}` }] };
+    } else if (toolName === "get_columns") {
+      console.log(`[TOOL CALL] Executing get_columns query...`);
+      const queryResult = await pool.query(`
         SELECT column_name 
         FROM information_schema.columns 
         WHERE table_schema = current_schema() 
         AND table_name = 'data'
         ORDER BY ordinal_position
       `);
-      
-      const columns = result.rows.map((r) => r.column_name);
-
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(columns, null, 2),
-          },
-        ],
-      };
+      const columns = queryResult.rows.map((r) => r.column_name);
+      console.log(`[TOOL CALL] get_columns returned ${columns.length} columns`);
+      result = { content: [{ type: "text", text: JSON.stringify(columns, null, 2) }] };
+    } else {
+      console.log(`[TOOL CALL] Unknown tool: ${toolName}`);
+      result = { content: [{ type: "text", text: `Unknown tool: ${toolName}` }] };
     }
-
-    throw new Error(`Unknown tool: ${toolName}`);
+    
+    console.log(`[TOOL CALL] Returning result for ${toolName}`);
+    return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Database query failed: ${message}`);
+    console.log(`[TOOL CALL] Error: ${message}`);
+    return { content: [{ type: "text", text: `Error: ${message}` }] };
   }
 });
 
