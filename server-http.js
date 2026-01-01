@@ -260,7 +260,23 @@ app.get("/sse", async (req, res) => {
 
   activeTransports.set(sessionId, transport);
 
+  // Send keepalive pings every 15 seconds to prevent connection timeout
+  const keepaliveInterval = setInterval(() => {
+    if (res.writableEnded) {
+      clearInterval(keepaliveInterval);
+      return;
+    }
+    try {
+      res.write(`: keepalive ${Date.now()}\n\n`);
+      console.log(`[SSE] Keepalive sent for session ${sessionId}`);
+    } catch (e) {
+      console.log(`[SSE] Keepalive failed for session ${sessionId}:`, e.message);
+      clearInterval(keepaliveInterval);
+    }
+  }, 15000);
+
   const cleanup = () => {
+    clearInterval(keepaliveInterval);
     activeTransports.delete(sessionId);
     console.log(`[SSE] Session closed: ${sessionId}`);
   };
@@ -269,8 +285,14 @@ app.get("/sse", async (req, res) => {
   transport.onclose = cleanup;
 
   // Log when the response is finished or errors
-  res.on("finish", () => console.log(`[SSE] Response finished for session ${sessionId}`));
-  res.on("error", (err) => console.log(`[SSE] Response error for session ${sessionId}:`, err));
+  res.on("finish", () => {
+    clearInterval(keepaliveInterval);
+    console.log(`[SSE] Response finished for session ${sessionId}`);
+  });
+  res.on("error", (err) => {
+    clearInterval(keepaliveInterval);
+    console.log(`[SSE] Response error for session ${sessionId}:`, err);
+  });
 
   await server.connect(transport);
 });
