@@ -236,30 +236,41 @@ app.get("/health", async (req, res) => {
 
 // SSE endpoint
 app.get("/sse", async (req, res) => {
-  console.log("New SSE connection established");
+  console.log("[SSE] New connection established");
 
   let messageEndpoint = process.env.MESSAGE_ENDPOINT || "/message";
   try {
     const url = new URL(messageEndpoint);
     messageEndpoint = url.pathname;
-    console.log(`Extracted message endpoint path from URL: ${messageEndpoint}`);
+    console.log(`[SSE] Extracted message endpoint path from URL: ${messageEndpoint}`);
   } catch (e) {
-    console.log(`Using message endpoint as-is: ${messageEndpoint}`);
+    console.log(`[SSE] Using message endpoint as-is: ${messageEndpoint}`);
   }
 
   const transport = new SSEServerTransport(messageEndpoint, res);
   const sessionId = transport.sessionId;
-  console.log(`Session created: ${sessionId}`);
+  console.log(`[SSE] Session created: ${sessionId}`);
+
+  // Wrap the transport's send method to log SSE events
+  const originalSend = transport.send.bind(transport);
+  transport.send = async (message) => {
+    console.log(`[SSE] Sending event for session ${sessionId}:`, JSON.stringify(message).substring(0, 200));
+    return originalSend(message);
+  };
 
   activeTransports.set(sessionId, transport);
 
   const cleanup = () => {
     activeTransports.delete(sessionId);
-    console.log(`Session closed: ${sessionId}`);
+    console.log(`[SSE] Session closed: ${sessionId}`);
   };
 
   res.on("close", cleanup);
   transport.onclose = cleanup;
+
+  // Log when the response is finished or errors
+  res.on("finish", () => console.log(`[SSE] Response finished for session ${sessionId}`));
+  res.on("error", (err) => console.log(`[SSE] Response error for session ${sessionId}:`, err));
 
   await server.connect(transport);
 });
